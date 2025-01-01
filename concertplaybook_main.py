@@ -86,18 +86,22 @@ def get_artist_id(access_token):
     params = {
         "q": ARTIST_NAME,
         "type": "artist",
-        "limit": 1  # Only fetch the top result
+        "limit": 5  # Increase limit to fetch more artists for better matching
     }
     response = requests.get(url, headers=headers, params=params)
     
     if response.status_code == 200:
         data = response.json()
-        if data["artists"]["items"]:
-            artist = data["artists"]["items"][0]  # Get the first result
-            return artist["id"], artist["name"]  # Return artist ID and name
-        else:
-            print("No artist found with the given name.")
-            return None, None
+        # Try to match exactly with ARTIST_NAME (ignoring case)
+        for artist in data["artists"]["items"]:
+            if ARTIST_NAME.strip().lower() == artist["name"].strip().lower():
+                return artist["id"], artist["name"]
+        
+        # If no exact match, provide feedback to the user
+        print(f"Warning: No exact match found for '{ARTIST_NAME}', showing first result.")
+        # Return the first available result as fallback
+        artist = data["artists"]["items"][0]
+        return artist["id"], artist["name"]
     else:
         print(f"Error searching for artist: {response.status_code}, {response.text}")
         return None, None
@@ -116,15 +120,110 @@ def artist_top_tracks(access_token, artist_id):
         print(f"Error fetching {ARTIST_NAME}'s top tracks: {response.status_code}, {response.text}")
         return None
 
+############################## RETRIEVE SETLIST ##############################
+
+def find_setlist(access_token):
+    # API endpoint
+    search_url = "https://api.spotify.com/v1/search"
+
+    # Search parameters
+    params = {
+        "q": f"{ARTIST_NAME} Setlist",
+        "type": "playlist",
+        "limit": 50
+    }
+
+    # Headers with the access token
+    headers = {
+        "Authorization": f"Bearer {access_token}"
+    }
+
+    # Search for playlists
+    response = requests.get(search_url, headers=headers, params=params)
+
+    if response.status_code == 200:
+        data = response.json()
+        playlists = data.get('playlists', {}).get('items', [])
+
+        if not playlists:
+            print("No playlists found.")
+            return None
+
+    # Filter playlists that contain both artist name and 'setlist' in the title
+        filtered_playlists = [
+            playlist for playlist in playlists
+            if playlist and playlist['name'] and ARTIST_NAME.lower() in playlist['name'].lower() and 'setlist' in playlist['name'].lower()
+            and (CONCERT_NAME in playlist['name'] or YEAR in playlist['name'])
+        ]
+
+        if not filtered_playlists:
+            print("No playlists match the criteria.")
+            return None
+
+        # Find the playlist with the most followers
+        most_followed_playlist = None
+        max_followers = 0
+
+        for playlist in filtered_playlists:
+            # Get playlist details (need to request followers count explicitly)
+            playlist_id = playlist['id']
+            details_url = f"https://api.spotify.com/v1/playlists/{playlist_id}"
+            details_response = requests.get(details_url, headers=headers)
+
+            if details_response.status_code == 200:
+                details = details_response.json()
+                followers = details['followers']['total']
+                if followers > max_followers:
+                    max_followers = followers
+                    most_followed_playlist = {
+                        "name": details['name'],
+                        "followers": followers,
+                        "url": details['external_urls']['spotify']
+                    }
+
+        if most_followed_playlist:
+            print(f"Most followed playlist: {most_followed_playlist['name']}")
+            print(f"Followers: {most_followed_playlist['followers']}")
+            print(f"URL: {most_followed_playlist['url']}")
+        else:
+            print("No playlists found.")
+        return most_followed_playlist
+    else:
+        print(f"Error: {response.status_code}, {response.text}")
+
+
+############################## COMPARE USER'S LISTENED TRACKS TO ARTIST TRACKS + SETLIST ##############################
+
+def heard_artist_tracks(tracks):
+    tracks_by_artist = []
+    for track in tracks:
+        # Check if the artist matches any artist in the track's "artists" field
+        if ARTIST_NAME in [a["name"] for a in track["artists"]]:
+            tracks_by_artist.append(track["name"])  # Append the track name
+    return tracks_by_artist
+
+
 # Route to handle logging in
 @app.route('/')
 def login():
-    artist_name = request.args.get("artist_name", "")
-    if not artist_name:
-        return "Please provide an artist name in the query string (in the format ?artist_name=(your artist's name))", 400
+    info = request.args.get("info", "")
+    if not info:
+        return "Please provide an artist name, concert name, and concert year in the query string (in the format ?info=artist_name/concert_name/year)", 400
 
+    info = info.split("/")
+    
+    if len(info) != 3:
+        return "The query string must contain artist_name, concert_name, and year separated by slashes.", 400
+
+    
     global ARTIST_NAME
-    ARTIST_NAME = artist_name  # Set the global artist name dynamically
+    global CONCERT_NAME
+    global YEAR
+
+    ARTIST_NAME = info[0]  # Set the global artist name dynamically
+    CONCERT_NAME = info[1]
+    YEAR = info[2]
+
     auth_url = get_authorization_url()
     return redirect(auth_url)
 
@@ -177,6 +276,7 @@ def redirect_page():
         "user_profile": user_prof,
         "top_tracks": top_user_tracks
     }
+    find_setlist(access_token)
     return json.dumps(result, indent=4)
 
 
