@@ -61,20 +61,41 @@ def user_profile(access_token):
         print(f"Error fetching user profile: {response.status_code}, {response.text}")
         return None
 
-def user_top_tracks(access_token):
+def user_liked_songs(access_token):
     url = "https://api.spotify.com/v1/me/top/tracks"
     headers = {"Authorization": f"Bearer {access_token}"}
 
-    params = {"time_range":"medium_term", "limit": 50} #Spotify's recently-played endpoint has a default limit of 50 tracks per request
-    
-    response = requests.get(url, headers=headers, params=params)
-    
-    if response.status_code == 200:
-        return response.json()["items"]  #Returns a list of recently played tracks
-    else:
-        print(f"Error fetching user's top tracks: {response.status_code}, {response.text}")
-        return None
-    
+    all_tracks = []
+    params = {"time_range":"medium_term", "limit": 50} 
+
+    #while loop to retrieve all of the user's liked songs
+    while True:
+        response = requests.get(url, headers=headers, params=params)
+        
+        if response.status_code == 200:
+            data = response.json()
+            tracks = data.get("items", [])
+            
+            tracks_final = []
+            for track in tracks:
+                if "name" in track:  
+                    tracks_final.append(track)
+
+            all_tracks.extend(tracks_final)
+            
+            # Check if there is another page of results (i.e. more liked songs)
+            next_page_url = data.get("next")
+            if not next_page_url:  
+                break
+            else:
+                # update the URL for the next request
+                params["offset"] = len(all_tracks)
+        else:
+            print(f"Error fetching user's liked tracks: {response.status_code}, {response.text}")
+            return None
+
+    return all_tracks
+ 
 
 ############################## RETRIEVE ARTIST'S TOP TRACKS FROM PAST 6 MONTHS ##############################
 
@@ -86,7 +107,7 @@ def get_artist_id(access_token):
     params = {
         "q": ARTIST_NAME,
         "type": "artist",
-        "limit": 5  # Increase limit to fetch more artists for better matching
+        "limit": 50
     }
     response = requests.get(url, headers=headers, params=params)
     
@@ -97,7 +118,6 @@ def get_artist_id(access_token):
             if ARTIST_NAME.strip().lower() == artist["name"].strip().lower():
                 return artist["id"], artist["name"]
         
-        # If no exact match, provide feedback to the user
         print(f"Warning: No exact match found for '{ARTIST_NAME}', showing first result.")
         # Return the first available result as fallback
         artist = data["artists"]["items"][0]
@@ -110,12 +130,12 @@ def artist_top_tracks(access_token, artist_id):
     url = f"https://api.spotify.com/v1/artists/{artist_id}/top-tracks"
     headers = {"Authorization": f"Bearer {access_token}"}
 
-    params = {"time_range":"medium_term"} #Spotify's recently-played endpoint has a default limit of 50 tracks per request
-    
+    params = {"time_range":"medium_term"} 
+
     response = requests.get(url, headers=headers, params=params)
     
     if response.status_code == 200:
-        return response.json()["tracks"]  # Returns a list of recently played tracks
+        return response.json()["tracks"]
     else:
         print(f"Error fetching {ARTIST_NAME}'s top tracks: {response.status_code}, {response.text}")
         return None
@@ -126,19 +146,16 @@ def find_setlist(access_token):
     # API endpoint
     search_url = "https://api.spotify.com/v1/search"
 
-    # Search parameters
     params = {
         "q": f"{ARTIST_NAME} Setlist",
         "type": "playlist",
         "limit": 50
     }
 
-    # Headers with the access token
     headers = {
         "Authorization": f"Bearer {access_token}"
     }
 
-    # Search for playlists
     response = requests.get(search_url, headers=headers, params=params)
 
     if response.status_code == 200:
@@ -165,7 +182,6 @@ def find_setlist(access_token):
         max_followers = 0
 
         for playlist in filtered_playlists:
-            # Get playlist details (need to request followers count explicitly)
             playlist_id = playlist['id']
             details_url = f"https://api.spotify.com/v1/playlists/{playlist_id}"
             details_response = requests.get(details_url, headers=headers)
@@ -197,9 +213,8 @@ def find_setlist(access_token):
 def heard_artist_tracks(tracks):
     tracks_by_artist = []
     for track in tracks:
-        # Check if the artist matches any artist in the track's "artists" field
         if ARTIST_NAME in [a["name"] for a in track["artists"]]:
-            tracks_by_artist.append(track["name"])  # Append the track name
+            tracks_by_artist.append(track)
     return tracks_by_artist
 
 
@@ -228,7 +243,6 @@ def login():
     return redirect(auth_url)
 
     
-
 # Route to handle the redirect URI after user authorizes
 @app.route('/redirect')
 def redirect_page():
@@ -245,8 +259,8 @@ def redirect_page():
         return "Error retrieving user profile.", 500
 
     # Fetch user's top tracks
-    top_user_tracks = user_top_tracks(access_token)
-    if not top_user_tracks:
+    liked_songs = user_liked_songs(access_token)
+    if not liked_songs:
         return "Error retrieving user's top tracks.", 500
    
     artist_id = get_artist_id(access_token)
@@ -259,7 +273,7 @@ def redirect_page():
         return "Error retrieving artist's top tracks.", 500
    
     print("User's Top Tracks:")
-    for idx, track in enumerate(top_user_tracks):
+    for idx, track in enumerate(liked_songs):
         track_name = track["name"]
         artist_name = ", ".join(artist["name"] for artist in track["artists"])
         print(f"{idx + 1}. {track_name} by {artist_name}")
@@ -274,7 +288,7 @@ def redirect_page():
     # Combine user profile and top tracks into a single response
     result = {
         "user_profile": user_prof,
-        "top_tracks": top_user_tracks
+        "liked_songs": liked_songs,
     }
     find_setlist(access_token)
     return json.dumps(result, indent=4)
