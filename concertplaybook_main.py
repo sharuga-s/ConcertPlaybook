@@ -62,34 +62,26 @@ def user_profile(access_token):
         return None
 
 def user_liked_songs(access_token):
-    url = "https://api.spotify.com/v1/me/top/tracks"
+    url = "https://api.spotify.com/v1/me/tracks"
     headers = {"Authorization": f"Bearer {access_token}"}
 
     all_tracks = []
-    params = {"time_range":"medium_term", "limit": 50} 
 
     #while loop to retrieve all of the user's liked songs
-    while True:
-        response = requests.get(url, headers=headers, params=params)
+    while url:
+        response = requests.get(url, headers=headers)
         
         if response.status_code == 200:
             data = response.json()
             tracks = data.get("items", [])
             
-            tracks_final = []
-            for track in tracks:
-                if "name" in track:  
-                    tracks_final.append(track)
-
-            all_tracks.extend(tracks_final)
+            for item in tracks:
+                track = item.get("track")
+                if track:  # Ensure the "track" object exists
+                    all_tracks.append(track)
             
             # Check if there is another page of results (i.e. more liked songs)
-            next_page_url = data.get("next")
-            if not next_page_url:  
-                break
-            else:
-                # update the URL for the next request
-                params["offset"] = len(all_tracks)
+            url = data.get("next")
         else:
             print(f"Error fetching user's liked tracks: {response.status_code}, {response.text}")
             return None
