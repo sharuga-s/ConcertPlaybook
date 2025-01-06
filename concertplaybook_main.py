@@ -19,7 +19,7 @@ redirect_uri = os.getenv("REDIRECT_URI", "http://127.0.0.1:5000/redirect")  # De
 
 def get_authorization_url():
     auth_url = "https://accounts.spotify.com/authorize"
-    scope = "user-library-read user-read-private user-top-read user-read-recently-played"  # Updated scope
+    scope = "user-library-read user-read-private user-top-read user-read-recently-played playlist-modify-private playlist-modify-public"  # Updated scope
     auth_params = {
         "response_type": "code",
         "client_id": client_id,
@@ -67,7 +67,7 @@ def user_liked_songs(access_token):
 
     all_tracks = []
 
-    #while loop to retrieve all of the user's liked songs
+    #while loop to retrieve all of the user's liked songs (Spotify can only fetch 50 by itself, so we use pagination handling, which helps us fetch data from multiple pages)
     while url:
         response = requests.get(url, headers=headers)
         
@@ -87,6 +87,21 @@ def user_liked_songs(access_token):
             return None
 
     return all_tracks
+
+def user_top_tracks(access_token):
+    url = "https://api.spotify.com/v1/me/top/tracks"
+    headers = {"Authorization": f"Bearer {access_token}"}
+
+    params = {"time_range":"medium_term", "limit": 50} #default limit of 50 tracks per request
+    
+    response = requests.get(url, headers=headers, params=params)
+    
+    if response.status_code == 200:
+        return response.json()["items"]
+    else:
+        print(f"Error fetching user's top tracks: {response.status_code}, {response.text}")
+        return None
+
  
 
 ############################## RETRIEVE ARTIST'S TOP TRACKS FROM PAST 6 MONTHS ##############################
@@ -134,12 +149,13 @@ def artist_top_tracks(access_token, artist_id):
 
 ############################## RETRIEVE SETLIST ##############################
 
+#Enhancement: If no matching playlist is found, return all playlists containing "setlist" and let the user choose manually.
 def find_setlist(access_token):
     # API endpoint
     search_url = "https://api.spotify.com/v1/search"
 
     params = {
-        "q": f"{ARTIST_NAME} Setlist",
+        "q": f"{ARTIST_NAME} {CONCERT_NAME} Setlist",
         "type": "playlist",
         "limit": 50
     }
@@ -157,11 +173,16 @@ def find_setlist(access_token):
         if not playlists:
             print("No playlists found.")
             return None
-
+        
+        name_split = ARTIST_NAME.lower().split()
+            
     # Filter playlists that contain both artist name and 'setlist' in the title
         filtered_playlists = [
             playlist for playlist in playlists
-            if playlist and playlist['name'] and ARTIST_NAME.lower() in playlist['name'].lower() and 'setlist' in playlist['name'].lower()
+            if playlist
+            and playlist['name']
+            and any(part in playlist['name'].lower() for part in name_split)
+            and ('setlist' in playlist['name'].lower() or 'concert' in playlist['name'].lower() or 'tour' in playlist['name'].lower())
             and (CONCERT_NAME in playlist['name'] or YEAR in playlist['name'])
         ]
 
@@ -186,7 +207,8 @@ def find_setlist(access_token):
                     most_followed_playlist = {
                         "name": details['name'],
                         "followers": followers,
-                        "url": details['external_urls']['spotify']
+                        "url": details['external_urls']['spotify'],
+                        "id" : playlist_id,
                     }
 
         if most_followed_playlist:
@@ -195,7 +217,17 @@ def find_setlist(access_token):
             print(f"URL: {most_followed_playlist['url']}")
         else:
             print("No playlists found.")
-        return most_followed_playlist
+            return None
+        
+        url = f"https://api.spotify.com/v1/playlists/{most_followed_playlist['id']}/tracks"
+        headers = {
+            "Authorization": f"Bearer {access_token}"
+        }
+        response = requests.get(url, headers=headers)
+        return response.json()["items"]
+
+
+
     else:
         print(f"Error: {response.status_code}, {response.text}")
 
@@ -205,9 +237,67 @@ def find_setlist(access_token):
 def heard_artist_tracks(tracks):
     tracks_by_artist = []
     for track in tracks:
-        if ARTIST_NAME in [a["name"] for a in track["artists"]]:
-            tracks_by_artist.append(track)
+        if "artists" in track and isinstance(track["artists"], list):
+            artist_names = [a.get("name") for a in track["artists"] if "name" in a]
+            if ARTIST_NAME in artist_names:
+                tracks_by_artist.append(track)
     return tracks_by_artist
+
+def track_in_list(track, track_list):
+    #this line doesn't consider when the same song is released in diff albums
+    #return any(track['uri'] == t.get('uri') for t in track_list) #any is the same as seeing if the track matches any track in the given track_list
+
+
+    #to check if the consumed track exists in the consumed track_list, we search for any tracks with the same name + artists
+    name = track.get('name', '').lower()
+    artists = {a['name'].lower() for a in track.get('artists', [])}
+
+    for t in track_list:
+        t_art = {a['name'].lower() for a in t.get('artists', [])}
+        if t.get('name', '').lower() == name and t_art == artists:
+            return True
+    
+    return False
+
+def unheard_tracks(user_id, access_token, liked_songs, top_user_tracks, top_artist_tracks, setlist):
+    known_songs = liked_songs + [track for track in top_user_tracks if track not in liked_songs]
+
+    # filter tracks + extract URIs only for unknown songs
+    unknown_songs_uris = []
+    for i in top_artist_tracks:
+        if i and not track_in_list(i, known_songs):
+            unknown_songs_uris.append(i['uri'])
+                     
+
+    for i in setlist:
+        track = i.get('track', {})
+        if track and not track_in_list(track, known_songs):
+            if track.get('uri') not in unknown_songs_uris:
+                unknown_songs_uris.append(track.get('uri'))
+
+    url = f"https://api.spotify.com/v1/users/{user_id}/playlists"
+    headers = {"Authorization": f"Bearer {access_token}"}
+
+    params = {"name":f"{ARTIST_NAME} Concert Prep Playlist",
+              "description": "x",
+              "public": False} 
+
+    response = requests.post(url, headers=headers, json=params)
+    if response.status_code != 201:
+        return f"Error creating playlist: {response.status_code}, {response.text}"
+
+    data = response.json()
+    id = data["id"]
+    url = data["external_urls"]["spotify"]
+
+    playlist_url = f"https://api.spotify.com/v1/playlists/{id}/tracks"
+    playlist_headers =  {"Authorization": f"Bearer {access_token}"}
+    playlist_params = {"uris": unknown_songs_uris}
+    playlist_response = requests.post(playlist_url, headers=playlist_headers, json=playlist_params)
+    if playlist_response.status_code == 201:
+        return "Here's the link to your concert preparation playlist: " + url
+    else:
+        return f"Error adding tracks to playlist: {playlist_response.status_code}, {playlist_response.text}"
 
 
 # Route to handle logging in
@@ -250,11 +340,14 @@ def redirect_page():
     if not user_prof:
         return "Error retrieving user profile.", 500
 
-    # Fetch user's top tracks
     liked_songs = user_liked_songs(access_token)
     if not liked_songs:
+        return "Error retrieving user's liked songs.", 500
+    
+    top_user_tracks = user_top_tracks(access_token)
+    if not top_user_tracks:
         return "Error retrieving user's top tracks.", 500
-   
+    
     artist_id = get_artist_id(access_token)
     if not artist_id:
         return "Error retrieving artist's ID.", 500
@@ -264,25 +357,33 @@ def redirect_page():
     if not top_artist_tracks:
         return "Error retrieving artist's top tracks.", 500
    
-    print("User's Top Tracks:")
-    for idx, track in enumerate(liked_songs):
-        track_name = track["name"]
-        artist_name = ", ".join(artist["name"] for artist in track["artists"])
-        print(f"{idx + 1}. {track_name} by {artist_name}")
+    # print("User's Top Tracks:")
+    # for idx, track in enumerate(liked_songs):
+    #     track_name = track["name"]
+    #     artist_name = ", ".join(artist["name"] for artist in track["artists"])
+    #     print(f"{idx + 1}. {track_name} by {artist_name}")
 
 
-    print("Artist's Top Tracks:")
-    for idx, track in enumerate(top_artist_tracks):
-        track_name = track["name"]
-        artist_name = ", ".join(artist["name"] for artist in track["artists"])
-        print(f"{idx + 1}. {track_name} by {artist_name}")
+    # print("Artist's Top Tracks:")
+    # for idx, track in enumerate(top_artist_tracks):
+    #     track_name = track["name"]
+    #     artist_name = ", ".join(artist["name"] for artist in track["artists"])
+    #     print(f"{idx + 1}. {track_name} by {artist_name}")
+    
+    new = ""
+    setlist = find_setlist(access_token)
+    if setlist != None:
+        new = unheard_tracks(user_prof["id"], access_token, liked_songs, top_user_tracks, top_artist_tracks, setlist)
+        print(new)
 
     # Combine user profile and top tracks into a single response
     result = {
         "user_profile": user_prof,
         "liked_songs": liked_songs,
+        "user_top_tracks": top_user_tracks,
+        "setlist": setlist,
+        "concert_prep_playlist": new
     }
-    find_setlist(access_token)
     return json.dumps(result, indent=4)
 
 
