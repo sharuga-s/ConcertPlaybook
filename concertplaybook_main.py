@@ -175,6 +175,7 @@ def find_setlist(access_token):
             return None
         
         name_split = ARTIST_NAME.lower().split()
+        conc_split =  CONCERT_NAME.lower().split()
             
     # Filter playlists that contain both artist name and 'setlist' in the title
         filtered_playlists = [
@@ -183,7 +184,7 @@ def find_setlist(access_token):
             and playlist['name']
             and any(part in playlist['name'].lower() for part in name_split)
             and ('setlist' in playlist['name'].lower() or 'concert' in playlist['name'].lower() or 'tour' in playlist['name'].lower())
-            and (CONCERT_NAME in playlist['name'] or YEAR in playlist['name'])
+            and (any(part in playlist['name'].lower() for part in conc_split) or YEAR in playlist['name'])
         ]
 
         if not filtered_playlists:
@@ -234,14 +235,14 @@ def find_setlist(access_token):
 
 ############################## COMPARE USER'S LISTENED TRACKS TO ARTIST TRACKS + SETLIST ##############################
 
-def heard_artist_tracks(tracks):
-    tracks_by_artist = []
-    for track in tracks:
-        if "artists" in track and isinstance(track["artists"], list):
-            artist_names = [a.get("name") for a in track["artists"] if "name" in a]
-            if ARTIST_NAME in artist_names:
-                tracks_by_artist.append(track)
-    return tracks_by_artist
+# def heard_artist_tracks(tracks):
+#     tracks_by_artist = []
+#     for track in tracks:
+#         if "artists" in track and isinstance(track["artists"], list):
+#             artist_names = [a.get("name") for a in track["artists"] if "name" in a]
+#             if ARTIST_NAME in artist_names:
+#                 tracks_by_artist.append(track)
+#     return tracks_by_artist
 
 def track_in_list(track, track_list):
     #this line doesn't consider when the same song is released in diff albums
@@ -249,12 +250,12 @@ def track_in_list(track, track_list):
 
 
     #to check if the consumed track exists in the consumed track_list, we search for any tracks with the same name + artists
-    name = track.get('name', '').lower()
-    artists = {a['name'].lower() for a in track.get('artists', [])}
+    name = track.get('name', '').lower().strip()
+    artists = {a['name'].lower().strip() for a in track.get('artists', [])}
 
     for t in track_list:
-        t_art = {a['name'].lower() for a in t.get('artists', [])}
-        if t.get('name', '').lower() == name and t_art == artists:
+        t_art = {a['name'].lower().strip() for a in t.get('artists', [])}
+        if t.get('name', '').lower().strip() == name and t_art == artists:
             return True
     
     return False
@@ -298,6 +299,7 @@ def unheard_tracks(user_id, access_token, liked_songs, top_user_tracks, top_arti
         return "Here's the link to your concert preparation playlist: " + url
     else:
         return f"Error adding tracks to playlist: {playlist_response.status_code}, {playlist_response.text}"
+
 
 
 # Route to handle logging in
@@ -369,7 +371,7 @@ def redirect_page():
     #     track_name = track["name"]
     #     artist_name = ", ".join(artist["name"] for artist in track["artists"])
     #     print(f"{idx + 1}. {track_name} by {artist_name}")
-    
+
     new = ""
     setlist = find_setlist(access_token)
     if setlist != None:
