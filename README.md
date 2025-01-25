@@ -1,12 +1,6 @@
-Features ✨
-Retrieves the user's liked songs and top tracks from the past 6 months.
-Fetches an artist's top tracks and their concert setlist.
-Compares the user's known tracks with the artist's setlist.
-Creates a custom playlist with songs the user hasn't heard yet to prepare for the concert.
-
+Let’s be real—concerts are way more fun when you know the lyrics to every song. With ConcertPlaybook, just enter the concert and artist, and we’ll make you a playlist of all the songs you don't know yet. It's like a study playlist, but way cooler (no rain sounds, promise). Get ready to sing your heart out!
 
 Installation 📥
-
 
 Follow these steps to set up and run the app:
 
